@@ -103,6 +103,70 @@ app.post('/api/words', (req, res) => {
   );
 });
 
+// CEFR düzeyine göre kelimeler
+app.get('/api/words/level/:level', (req, res) => {
+  const level = req.params.level.toUpperCase();
+  
+  db.all('SELECT * FROM words WHERE cefr_level = ?', [level], (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    
+    const words = rows.map(row => ({
+      ...row,
+      turkish_meanings: JSON.parse(row.turkish_meanings)
+    }));
+    
+    res.json(words);
+  });
+});
+
+// Rastgele kelime getir
+app.get('/api/words/random', (req, res) => {
+  db.get('SELECT * FROM words ORDER BY RANDOM() LIMIT 1', (err, row) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    
+    if (!row) {
+      res.status(404).json({ error: 'Kelime bulunamadı' });
+      return;
+    }
+    
+    const result = {
+      ...row,
+      turkish_meanings: JSON.parse(row.turkish_meanings)
+    };
+    
+    res.json(result);
+  });
+});
+
+// Kelime ara (kısmi eşleşme)
+app.get('/api/search/:query', (req, res) => {
+  const query = req.params.query.toLowerCase();
+  
+  db.all(
+    'SELECT * FROM words WHERE LOWER(english_word) LIKE ?', 
+    [`%${query}%`], 
+    (err, rows) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+      
+      const words = rows.map(row => ({
+        ...row,
+        turkish_meanings: JSON.parse(row.turkish_meanings)
+      }));
+      
+      res.json(words);
+    }
+  );
+});
+
 // Sunucuyu başlat
 app.listen(PORT, () => {
   console.log(`Server ${PORT} portunda çalışıyor`);
