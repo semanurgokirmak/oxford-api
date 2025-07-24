@@ -167,6 +167,44 @@ app.get('/api/search/:query', (req, res) => {
   );
 });
 
+// Kelime silme endpoint'i (ID ile)
+app.delete('/api/words/:id', (req, res) => {
+  const id = req.params.id;
+  
+  db.run('DELETE FROM words WHERE id = ?', [id], function(err) {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    
+    if (this.changes === 0) {
+      res.status(404).json({ error: 'Kelime bulunamadı' });
+      return;
+    }
+    
+    res.json({ 
+      message: 'Kelime başarıyla silindi',
+      deletedId: id,
+      deletedCount: this.changes
+    });
+  });
+});
+
+// Tüm kelimeleri sil (Dikkatli kullan!)
+app.delete('/api/words/all', (req, res) => {
+  db.run('DELETE FROM words', function(err) {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    
+    res.json({ 
+      message: `${this.changes} kelime silindi. Veritabanı temizlendi.`,
+      deletedCount: this.changes 
+    });
+  });
+});
+
 // Sunucuyu başlat
 app.listen(PORT, () => {
   console.log(`Server ${PORT} portunda çalışıyor`);
