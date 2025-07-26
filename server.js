@@ -28,11 +28,19 @@ const initDatabase = async () => {
         example_translation TEXT,
         cefr_level TEXT,
         is_deleted BOOLEAN DEFAULT FALSE,
+        known BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    console.log('✅ PostgreSQL table created successfully!');
+    
+    // 🚀 Existing table'a known kolonu ekle (eğer yoksa)
+    await pool.query(`
+      ALTER TABLE words 
+      ADD COLUMN IF NOT EXISTS known BOOLEAN DEFAULT FALSE
+    `);
+    
+    console.log('✅ PostgreSQL table created/updated successfully with known field!');
   } catch (error) {
     console.error('❌ Database initialization error:', error);
   }
@@ -52,6 +60,53 @@ app.get('/api/words', async (req, res) => {
     res.json(result.rows);
   } catch (error) {
     console.error('Get words error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 🚀 YENİ: Kelime known durumunu güncelle
+app.patch('/api/words/:id/known', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { known } = req.body;
+    
+    if (typeof known !== 'boolean') {
+      return res.status(400).json({ error: 'known değeri boolean olmalı' });
+    }
+    
+    const result = await pool.query(
+      'UPDATE words SET known = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [known, id]
+    );
+    
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Kelime bulunamadı' });
+    }
+    
+    res.json({ 
+      message: known ? 'Kelime öğrenildi olarak işaretlendi' : 'Kelime öğrenilecek olarak işaretlendi',
+      wordId: parseInt(id),
+      known: known
+    });
+  } catch (error) {
+    console.error('Update known status error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 🚀 YENİ: Öğrenilen/öğrenilmemiş kelimeleri getir
+app.get('/api/words/known/:status', async (req, res) => {
+  try {
+    const { status } = req.params; // 'true' veya 'false'
+    const isKnown = status === 'true';
+    
+    const result = await pool.query(
+      'SELECT * FROM words WHERE is_deleted = FALSE AND known = $1 ORDER BY updated_at DESC',
+      [isKnown]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Get words by known status error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -131,9 +186,10 @@ app.post('/api/words', async (req, res) => {
       return res.status(400).json({ error: 'İngilizce kelime ve Türkçe anlamlar gerekli' });
     }
     
+    // 🚀 GÜNCELLENMIŞ: known field'ı da ekleniyor (default false)
     const result = await pool.query(
-      `INSERT INTO words (english_word, turkish_meanings, example_sentence, example_translation, cefr_level, updated_at) 
-       VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP) 
+      `INSERT INTO words (english_word, turkish_meanings, example_sentence, example_translation, cefr_level, known, updated_at) 
+       VALUES ($1, $2, $3, $4, $5, FALSE, CURRENT_TIMESTAMP) 
        RETURNING id`,
       [english_word, JSON.stringify(turkish_meanings), example_sentence, example_translation, cefr_level]
     );
@@ -176,7 +232,7 @@ app.put('/api/words/:id', async (req, res) => {
     
     res.json({ 
       message: 'Kelime başarıyla güncellendi',
-      updatedId: id,
+      updatedId: parseInt(id),
       changes: result.rowCount
     });
   } catch (error) {
@@ -201,7 +257,7 @@ app.delete('/api/words/:id', async (req, res) => {
     
     res.json({ 
       message: 'Kelime başarıyla silindi (gizlendi)',
-      deletedId: id,
+      deletedId: parseInt(id),
       changes: result.rowCount
     });
   } catch (error) {
@@ -226,7 +282,7 @@ app.post('/api/words/:id/restore', async (req, res) => {
     
     res.json({ 
       message: 'Kelime başarıyla geri getirildi',
-      restoredId: id,
+      restoredId: parseInt(id),
       changes: result.rowCount
     });
   } catch (error) {
@@ -251,7 +307,7 @@ app.delete('/api/words/:id/permanent', async (req, res) => {
     
     res.json({ 
       message: 'Kelime kalıcı olarak silindi',
-      deletedId: id,
+      deletedId: parseInt(id),
       changes: result.rowCount
     });
   } catch (error) {
@@ -275,15 +331,15 @@ app.get('/api/words/level/:level', async (req, res) => {
   }
 });
 
-// Rastgele aktif kelime getir
+// 🚀 GÜNCELLENMIŞ: Rastgele aktif kelime getir (sadece öğrenilmemiş)
 app.get('/api/words/random', async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT * FROM words WHERE is_deleted = FALSE ORDER BY RANDOM() LIMIT 1'
+      'SELECT * FROM words WHERE is_deleted = FALSE AND known = FALSE ORDER BY RANDOM() LIMIT 1'
     );
     
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Kelime bulunamadı' });
+      return res.status(404).json({ error: 'Öğrenilmemiş kelime bulunamadı' });
     }
     
     res.json(result.rows[0]);
@@ -308,7 +364,7 @@ app.get('/api/search/:query', async (req, res) => {
   }
 });
 
-// İstatistikler
+// 🚀 GÜNCELLENMIŞ: İstatistikler (known field dahil)
 app.get('/api/stats', async (req, res) => {
   try {
     const totalResult = await pool.query(
@@ -317,6 +373,14 @@ app.get('/api/stats', async (req, res) => {
     
     const deletedResult = await pool.query(
       'SELECT COUNT(*) as deleted FROM words WHERE is_deleted = TRUE'
+    );
+    
+    const knownResult = await pool.query(
+      'SELECT COUNT(*) as known FROM words WHERE is_deleted = FALSE AND known = TRUE'
+    );
+    
+    const unknownResult = await pool.query(
+      'SELECT COUNT(*) as unknown FROM words WHERE is_deleted = FALSE AND known = FALSE'
     );
     
     const levelResult = await pool.query(
@@ -331,6 +395,8 @@ app.get('/api/stats', async (req, res) => {
     res.json({
       total: parseInt(totalResult.rows[0].total),
       deleted: parseInt(deletedResult.rows[0].deleted),
+      known: parseInt(knownResult.rows[0].known),
+      unknown: parseInt(unknownResult.rows[0].unknown),
       by_level: byLevel
     });
   } catch (error) {
@@ -353,6 +419,10 @@ app.get('/health', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Server ${PORT} portunda çalışıyor`);
   console.log(`📊 API: http://localhost:${PORT}/api/words`);
-  console.log(`💾 Database: PostgreSQL`);
+  console.log(`💾 Database: PostgreSQL with known field support`);
   console.log(`🔗 Health: http://localhost:${PORT}/health`);
+  console.log(`✨ New endpoints:`);
+  console.log(`   - PATCH /api/words/:id/known (update known status)`);
+  console.log(`   - GET /api/words/known/true (get known words)`);
+  console.log(`   - GET /api/words/known/false (get unknown words)`);
 });
